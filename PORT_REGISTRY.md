@@ -11,11 +11,11 @@ This file tracks port allocations for services in this project.
 ## Port Policy
 
 - All services bind to `127.0.0.1` (not `localhost`) to avoid IPv6 issues
-- Ports must be registered here AND in the global registry at `/home/clayton/IDE/port-registry.json`
+- Ports must be registered here AND in your workspace's global port registry
 - Check port availability before starting: `lsof -i :<port>`
 
 ## Global Registry Reference
 
 This project's ports are also tracked in the workspace-wide registry:
-- **Location:** `/home/clayton/IDE/port-registry.json`
+- **Location:** `<workspace-root>/port-registry.json`
 - **Range:** 3000-3099 (Frontend Development)

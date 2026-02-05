@@ -60,7 +60,7 @@ This service uses a non-default port (3011 instead of 8080) to:
 If you need to change the port:
 1. Update `.env` with new `TRILIUM_PORT` value
 2. Update `PORT_REGISTRY.md` in project root
-3. Update `/home/clayton/IDE/port-registry.json` (global registry)
+3. Update your workspace's global port registry
 4. Restart the container
 
 ## Troubleshooting
