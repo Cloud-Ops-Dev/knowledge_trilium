@@ -13,7 +13,7 @@
  *  - app-info
  *  - print-config
  *  - ensure-openclaw-root [--parent root] [--title "OpenClaw"]
- *  - create-note --parent <id> --title <str> [--type text]
+ *  - create-note --parent <id> --title <str> [--type code] [--mime text/x-markdown]
  *  - get-note --id <noteId>
  *  - get-content --id <noteId>                  (GET /etapi/notes/{id}/content)
  *  - set-content --id <noteId> --text <string>  (PUT /etapi/notes/{id}/content, text/plain)
@@ -146,9 +146,12 @@ async function cmdEnsureOpenClawRoot(args) {
 async function cmdCreateNote(args) {
   const parentNoteId = args.parent || "root";
   const title = args.title;
-  const type = args.type || "text";
+  const type = args.type || "code";
+  const mime = args.mime || (type === "code" ? "text/x-markdown" : undefined);
   if (!title) die("create-note requires --title <string>");
-  const out = await etapi("/etapi/create-note", { method: "POST", json: { parentNoteId, title, type, content: "" } });
+  const body = { parentNoteId, title, type, content: "" };
+  if (mime) body.mime = mime;
+  const out = await etapi("/etapi/create-note", { method: "POST", json: body });
   jsonOut(out);
 }
 
@@ -209,7 +212,7 @@ async function cmdCreateLogEntry(args) {
   if (!title) die("create-log-entry requires --title <string>");
   if (!body || body === true) die("create-log-entry requires --body <string>");
 
-  const created = await etapi("/etapi/create-note", { method: "POST", json: { parentNoteId: root, title, type: "text", content: "" } });
+  const created = await etapi("/etapi/create-note", { method: "POST", json: { parentNoteId: root, title, type: "code", mime: "text/x-markdown", content: "" } });
   const noteId = extractNoteIdFromCreate(created);
   if (!noteId) {
     jsonOut({ ok: false, message: "Could not extract noteId from create-note response" });
@@ -245,7 +248,7 @@ async function main() {
         "trilium-etapi.mjs app-info",
         "trilium-etapi.mjs print-config",
         "trilium-etapi.mjs ensure-openclaw-root [--parent root] [--title \"OpenClaw\"]",
-        "trilium-etapi.mjs create-note --parent <id> --title \"...\" [--type text]",
+        "trilium-etapi.mjs create-note --parent <id> --title \"...\" [--type code] [--mime text/x-markdown]",
         "trilium-etapi.mjs get-note --id <noteId>",
         "trilium-etapi.mjs get-content --id <noteId>",
         "trilium-etapi.mjs set-content --id <noteId> --text \"...\"",
