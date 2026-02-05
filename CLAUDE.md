@@ -1,4 +1,4 @@
-# knowledge_trillium
+# knowledge_trilium
 
 ## Overview
 
@@ -31,7 +31,7 @@ Binaries:
 ## Project Structure
 
 ```
-knowledge_trillium/
+knowledge_trilium/
 ├── CLAUDE.md                          # This file
 ├── README.md                          # Public documentation
 ├── .gitignore

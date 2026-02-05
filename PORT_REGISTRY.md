@@ -1,4 +1,4 @@
-# Port Registry — knowledge_trillium
+# Port Registry — knowledge_trilium
 
 This file tracks port allocations for services in this project.
 

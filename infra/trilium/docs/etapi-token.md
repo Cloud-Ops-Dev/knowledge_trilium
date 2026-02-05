@@ -29,7 +29,7 @@ This document describes how to obtain and manage an ETAPI (External API) token f
 
 3. **Generate a New Token**
    - Click **Create new ETAPI token**, **Generate**, **Add token**, or similar
-   - Provide a descriptive name (e.g., `knowledge_trillium_integration`)
+   - Provide a descriptive name (e.g., `knowledge_trilium_integration`)
    - Copy the generated token immediately - it may only be shown once
 
 ### Method 2: Via ETAPI (Bootstrap with Existing Token)
