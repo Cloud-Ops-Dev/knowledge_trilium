@@ -33,3 +33,4 @@ tools/.openclaw-trilium.json
 workflows/state/threads.json
 workflows/state/intake_defaults.json
 tmp/discord_events.jsonl
+workflows/state/last_thread.json

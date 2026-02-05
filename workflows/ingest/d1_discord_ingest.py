@@ -2,6 +2,39 @@
 import json, os, sys, datetime, pathlib, subprocess
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+
+# --- OPENCLAW_LAST_THREAD_POINTERS_V1 ---
+_LAST_THREAD_PATH = REPO_ROOT / "workflows" / "state" / "last_thread.json"
+
+def _iso_now_local():
+    return datetime.datetime.now(datetime.datetime.now().astimezone().tzinfo).replace(microsecond=0).isoformat()
+
+def _load_pointer_json():
+    try:
+        if not _LAST_THREAD_PATH.exists():
+            return {}
+        return json.loads(_LAST_THREAD_PATH.read_text(encoding="utf-8") or "{}")
+    except Exception:
+        return {}
+
+def _atomic_write_json(path, obj):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+def update_last_thread_pointers(thread_key: str, guild_id: str = "", channel_id: str = "", source: str = "discord"):
+    data = _load_pointer_json()
+    data["global:last"] = thread_key
+    if source == "discord":
+        data["discord:last"] = thread_key
+        if channel_id:
+            data[f"discord:channel:{channel_id}"] = thread_key
+        if guild_id:
+            data[f"discord:guild:{guild_id}"] = thread_key
+    data["updated_at"] = _iso_now_local()
+    _atomic_write_json(_LAST_THREAD_PATH, data)
+# --- /OPENCLAW_LAST_THREAD_POINTERS_V1 ---
 THREADS_FILE = REPO_ROOT / "workflows" / "state" / "threads.json"
 C4 = REPO_ROOT / "workflows" / "c4_trilium_intake.sh"
 C2 = REPO_ROOT / "workflows" / "c2_trilium_thread.sh"
@@ -103,6 +136,12 @@ def main():
              "--thread", thread_key,
              "--who", who,
              "--text", text], capture=True)
+
+    # Update last-thread pointers (best-effort)
+    try:
+        update_last_thread_pointers(thread_key, guild_id=guild_id, channel_id=channel_id, source="discord")
+    except Exception:
+        pass
 
     sys.stdout.write(json.dumps({
         "ok": True,

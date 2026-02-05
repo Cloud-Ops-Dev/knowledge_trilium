@@ -7,6 +7,123 @@ set -euo pipefail
 SKILL="node ./skills/trilium/scripts/trilium.mjs"
 STATE_FILE="workflows/state/threads.json"
 
+# --- OPENCLAW_THREAD_POINTERS_V1 ---
+STATE_DIR="${STATE_DIR:-workflows/state}"
+LAST_THREAD_FILE="${LAST_THREAD_FILE:-$STATE_DIR/last_thread.json}"
+
+ensure_state_dir() { mkdir -p "$STATE_DIR"; }
+
+read_pointer_json() {
+  if [ -f "$LAST_THREAD_FILE" ]; then
+    cat "$LAST_THREAD_FILE"
+  else
+    echo "{}"
+  fi
+}
+
+write_pointer_json() {
+  ensure_state_dir
+  local tmp="$LAST_THREAD_FILE.tmp"
+  cat > "$tmp"
+  mv "$tmp" "$LAST_THREAD_FILE"
+}
+
+pointer_get() {
+  local jq_expr="$1"
+  read_pointer_json | jq -r "$jq_expr // empty"
+}
+
+resolve_latest_thread_key() {
+  local prefer_active="$1"
+  local source="$2"
+  local channel="$3"
+  local guild="$4"
+  local k=""
+
+  if [ "$prefer_active" = "true" ]; then
+    k="$(pointer_get '.active')"
+    if [ -n "$k" ]; then echo "$k"; return 0; fi
+  fi
+
+  if [ -n "$channel" ]; then
+    k="$(read_pointer_json | jq -r --arg ch "$channel" '.["discord:channel:" + $ch] // empty')"
+    if [ -n "$k" ]; then echo "$k"; return 0; fi
+  fi
+
+  if [ -n "$guild" ]; then
+    k="$(read_pointer_json | jq -r --arg g "$guild" '.["discord:guild:" + $g] // empty')"
+    if [ -n "$k" ]; then echo "$k"; return 0; fi
+  fi
+
+  if [ "$source" = "discord" ]; then
+    k="$(pointer_get '.["discord:last"]')"
+    if [ -n "$k" ]; then echo "$k"; return 0; fi
+  fi
+
+  k="$(pointer_get '.["global:last"]')"
+  if [ -n "$k" ]; then echo "$k"; return 0; fi
+
+  return 1
+}
+# --- /OPENCLAW_THREAD_POINTERS_V1 ---
+
+# --- POINTER COMMANDS (must be before main dispatch) ---
+if [ "${1:-}" = "get-latest" ]; then
+  shift
+  prefer_active="true"
+  source=""
+  channel=""
+  guild=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --prefer-active) prefer_active="${2:-true}"; shift 2 ;;
+      --source) source="${2:-}"; shift 2 ;;
+      --channel) channel="${2:-}"; shift 2 ;;
+      --guild) guild="${2:-}"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; exit 2 ;;
+    esac
+  done
+
+  key="$(resolve_latest_thread_key "$prefer_active" "$source" "$channel" "$guild" || true)"
+  if [ -z "${key:-}" ]; then
+    echo "No last thread known yet." >&2
+    exit 1
+  fi
+  echo "$key"
+  exit 0
+fi
+
+if [ "${1:-}" = "set-active" ]; then
+  shift
+  thread=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --thread) thread="${2:-}"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; exit 2 ;;
+    esac
+  done
+  if [ -z "$thread" ]; then
+    echo "Missing --thread KEY" >&2
+    exit 2
+  fi
+  ensure_state_dir
+  now="$(python3 -c 'import datetime; print(datetime.datetime.now(datetime.datetime.now().astimezone().tzinfo).replace(microsecond=0).isoformat())')"
+  read_pointer_json | jq --arg t "$thread" --arg now "$now" '.active=$t | .active_set_at=$now | .updated_at=$now' | write_pointer_json
+  exit 0
+fi
+
+if [ "${1:-}" = "clear-active" ]; then
+  read_pointer_json | jq 'del(.active) | del(.active_set_at)' | write_pointer_json
+  exit 0
+fi
+
+if [ "${1:-}" = "status" ]; then
+  read_pointer_json | jq -r '"active=" + (.active // "") + "\nglobal:last=" + (.["global:last"] // "") + "\ndiscord:last=" + (.["discord:last"] // "") + "\nupdated_at=" + (.updated_at // "")'
+  exit 0
+fi
+# --- /POINTER COMMANDS ---
+
 mkdir -p "$(dirname "$STATE_FILE")"
 if [ ! -f "$STATE_FILE" ]; then
   printf '%s\n' '{}' > "$STATE_FILE"
@@ -18,6 +135,10 @@ usage() {
   echo "  $0 append --thread <key> --text <text>"
   echo "  $0 get    --thread <key>"
   echo "  $0 close  --thread <key> [--delete true]"
+  echo "  $0 get-latest [--source discord] [--channel ID] [--guild ID]"
+  echo "  $0 set-active --thread <key>"
+  echo "  $0 clear-active"
+  echo "  $0 status"
   exit 2
 }
 
