@@ -35,3 +35,6 @@ workflows/state/threads.json
 workflows/state/intake_defaults.json
 tmp/
 workflows/state/last_thread.json
+
+# Infrastructure scripts (local only)
+infra/restore-after-reboot.sh
