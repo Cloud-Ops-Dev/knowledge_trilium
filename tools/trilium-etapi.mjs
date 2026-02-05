@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * TriliumNext ETAPI wrapper for OpenClaw (B5 contract)
+ * TriliumNext ETAPI wrapper for OpenClaw (B5 + FM contract)
  *
  * Env:
  *  - TRILIUM_BASE_URL (e.g. http://127.0.0.1:3011)
@@ -14,12 +14,18 @@
  *  - print-config
  *  - ensure-openclaw-root [--parent root] [--title "OpenClaw"]
  *  - create-note --parent <id> --title <str> [--type code] [--mime text/x-markdown]
- *  - get-note --id <noteId>
- *  - get-content --id <noteId>                  (GET /etapi/notes/{id}/content)
- *  - set-content --id <noteId> --text <string>  (PUT /etapi/notes/{id}/content, text/plain)
- *  - append-note --id <noteId> --text <string>  (get-content + set-content)
+ *  - get-note --id <noteId> | --path <path>
+ *  - get-content --id <noteId> | --path <path>
+ *  - set-content (--id <noteId> | --path <path>) --text <string>
+ *  - append-note (--id <noteId> | --path <path>) --text <string>
  *  - create-log-entry [--root <noteId>] --title <str> --body <str>
- *  - delete-note --id <noteId> --force
+ *  - delete-note (--id <noteId> | --path <path>) --force
+ *  - search-notes --query <str> [--limit 20]
+ *  - list-children --id <noteId> | --path <path>
+ *  - rename-note (--id <noteId> | --path <path>) --title <str>
+ *  - move-note (--id <noteId> | --path <path>) (--to <noteId> | --to-path <path>)
+ *  - resolve-path --path <path>
+ *  - create-folder (--parent <id> | --parent-path <path>) --title <str>
  */
 
 import fs from "node:fs";
@@ -156,23 +162,20 @@ async function cmdCreateNote(args) {
 }
 
 async function cmdGetNote(args) {
-  const id = args.id;
-  if (!id) die("get-note requires --id <noteId>");
+  const id = await resolveIdOrPath(args, "get-note");
   const out = await etapi(`/etapi/notes/${encodeURIComponent(id)}`);
   jsonOut(out);
 }
 
 async function cmdGetContent(args) {
-  const id = args.id;
-  if (!id) die("get-content requires --id <noteId>");
+  const id = await resolveIdOrPath(args, "get-content");
   const res = await etapi(`/etapi/notes/${encodeURIComponent(id)}/content`);
   jsonOut({ ok: true, httpStatus: res.httpStatus, path: res.path, content: res.rawText || "" });
 }
 
 async function cmdSetContent(args) {
-  const id = args.id;
+  const id = await resolveIdOrPath(args, "set-content");
   const text = args.text;
-  if (!id) die("set-content requires --id <noteId>");
   if (!text || text === true) die("set-content requires --text <string>");
   const out = await etapi(`/etapi/notes/${encodeURIComponent(id)}/content`, {
     method: "PUT",
@@ -183,9 +186,8 @@ async function cmdSetContent(args) {
 }
 
 async function cmdAppendNote(args) {
-  const id = args.id;
+  const id = await resolveIdOrPath(args, "append-note");
   const text = args.text;
-  if (!id) die("append-note requires --id <noteId>");
   if (!text || text === true) die("append-note requires --text <string>");
 
   const current = await etapi(`/etapi/notes/${encodeURIComponent(id)}/content`);
@@ -228,10 +230,171 @@ async function cmdCreateLogEntry(args) {
   jsonOut({ ok: true, created: true, noteId, parentNoteId: root, title });
 }
 
+// ── Path Resolution Helpers ──────────────────────────────────────────
+
+/**
+ * Walk the note tree segment by segment to resolve a path string to a noteId.
+ * Paths starting with "/" resolve from Trilium root ("root").
+ * Other paths resolve from the OpenClaw root note.
+ * Matching is case-insensitive.
+ */
+async function resolvePath(pathStr) {
+  const segments = pathStr.split("/").filter(Boolean);
+  if (segments.length === 0) die("resolve-path: empty path");
+
+  let currentId;
+  if (pathStr.startsWith("/")) {
+    currentId = "root";
+  } else {
+    const store = readStore();
+    currentId = store.openclawRootNoteId;
+    if (!currentId) die("resolve-path: no OpenClaw root set (run ensure-openclaw-root first)");
+  }
+
+  for (const segment of segments) {
+    const parentResp = await etapi(`/etapi/notes/${encodeURIComponent(currentId)}`);
+    const childIds = parentResp.data?.childNoteIds;
+    if (!childIds || childIds.length === 0) {
+      die(`resolve-path: "${segment}" not found — "${parentResp.data?.title || currentId}" has no children`);
+    }
+
+    let found = null;
+    for (const cid of childIds) {
+      const childResp = await etapi(`/etapi/notes/${encodeURIComponent(cid)}`);
+      if (childResp.data?.title?.toLowerCase() === segment.toLowerCase()) {
+        found = cid;
+        break;
+      }
+    }
+    if (!found) {
+      die(`resolve-path: "${segment}" not found under "${parentResp.data?.title || currentId}"`);
+    }
+    currentId = found;
+  }
+
+  return currentId;
+}
+
+/**
+ * Return a noteId from --id or --path.
+ * If --id is present, return it directly.
+ * If --path is present, resolve it via resolvePath().
+ * If neither, die with a usage message.
+ */
+async function resolveIdOrPath(args, label = "command") {
+  if (args.id) return args.id;
+  if (args.path) return resolvePath(args.path);
+  die(`${label} requires --id <noteId> or --path <path>`);
+}
+
+// ── File Manager Commands ───────────────────────────────────────────
+
+async function cmdSearchNotes(args) {
+  const query = args.query;
+  if (!query || query === true) die("search-notes requires --query <string>");
+  const limit = args.limit || "20";
+  const resp = await etapi(`/etapi/notes?search=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`);
+  const results = resp.data?.results || resp.data || [];
+  const notes = (Array.isArray(results) ? results : []).map(n => ({
+    noteId: n.noteId, title: n.title, type: n.type,
+    hasChildren: (n.childNoteIds?.length || 0) > 0
+  }));
+  jsonOut({ ok: true, count: notes.length, notes });
+}
+
+async function cmdListChildren(args) {
+  const id = await resolveIdOrPath(args, "list-children");
+  const parentResp = await etapi(`/etapi/notes/${encodeURIComponent(id)}`);
+  const childIds = parentResp.data?.childNoteIds || [];
+  const children = [];
+  for (const cid of childIds) {
+    const childResp = await etapi(`/etapi/notes/${encodeURIComponent(cid)}`);
+    const d = childResp.data || {};
+    children.push({
+      noteId: d.noteId || cid, title: d.title, type: d.type,
+      hasChildren: (d.childNoteIds?.length || 0) > 0
+    });
+  }
+  jsonOut({
+    ok: true, parentNoteId: id,
+    parentTitle: parentResp.data?.title || null,
+    count: children.length, children
+  });
+}
+
+async function cmdRenameNote(args) {
+  const id = await resolveIdOrPath(args, "rename-note");
+  const title = args.title;
+  if (!title || title === true) die("rename-note requires --title <string>");
+  await etapi(`/etapi/notes/${encodeURIComponent(id)}`, {
+    method: "PATCH", json: { title }
+  });
+  jsonOut({ ok: true, noteId: id, newTitle: title });
+}
+
+async function cmdMoveNote(args) {
+  const id = await resolveIdOrPath(args, "move-note");
+  // Resolve destination
+  let destId;
+  if (args.to) { destId = args.to; }
+  else if (args["to-path"]) { destId = await resolvePath(args["to-path"]); }
+  else { die("move-note requires --to <noteId> or --to-path <path>"); }
+
+  // Get the note to find its current branch
+  const noteResp = await etapi(`/etapi/notes/${encodeURIComponent(id)}`);
+  const branchIds = noteResp.data?.parentBranchIds;
+  if (!branchIds || branchIds.length === 0) die("move-note: note has no parent branches");
+  const oldBranchId = branchIds[0];
+
+  // Create new branch at destination
+  const newBranch = await etapi("/etapi/branches", {
+    method: "POST", json: { noteId: id, parentNoteId: destId }
+  });
+  const newBranchId = newBranch.data?.branchId;
+
+  // Delete old branch
+  await etapi(`/etapi/branches/${encodeURIComponent(oldBranchId)}`, { method: "DELETE" });
+
+  jsonOut({ ok: true, noteId: id, newParentId: destId, branchId: newBranchId || oldBranchId });
+}
+
+async function cmdResolvePath(args) {
+  const p = args.path;
+  if (!p || p === true) die("resolve-path requires --path <string>");
+  const noteId = await resolvePath(p);
+  jsonOut({ ok: true, path: p, noteId });
+}
+
+async function cmdCreateFolder(args) {
+  let parentId;
+  if (args.parent) { parentId = args.parent; }
+  else if (args["parent-path"]) { parentId = await resolvePath(args["parent-path"]); }
+  else {
+    const store = readStore();
+    parentId = store.openclawRootNoteId;
+    if (!parentId) die("create-folder requires --parent <id> or --parent-path <path>");
+  }
+
+  const title = args.title;
+  if (!title || title === true) die("create-folder requires --title <string>");
+
+  const out = await etapi("/etapi/create-note", {
+    method: "POST",
+    json: { parentNoteId: parentId, title, type: "text", content: "" }
+  });
+  const noteId = extractNoteIdFromCreate(out);
+  if (!noteId) {
+    jsonOut({ ok: false, message: "Could not extract noteId from create-note response" });
+    process.exit(1);
+  }
+  jsonOut({ ok: true, noteId, parentNoteId: parentId, title });
+}
+
+// ── Original Commands ───────────────────────────────────────────────
+
 async function cmdDeleteNote(args) {
-  const id = args.id;
+  const id = await resolveIdOrPath(args, "delete-note");
   const force = args.force === true || args.force === "true";
-  if (!id) die("delete-note requires --id <noteId>");
   if (!force) die("Refusing to delete without --force");
   const out = await etapi(`/etapi/notes/${encodeURIComponent(id)}`, { method: "DELETE" });
   jsonOut({ ok: true, httpStatus: out.httpStatus, path: out.path });
@@ -249,12 +412,18 @@ async function main() {
         "trilium-etapi.mjs print-config",
         "trilium-etapi.mjs ensure-openclaw-root [--parent root] [--title \"OpenClaw\"]",
         "trilium-etapi.mjs create-note --parent <id> --title \"...\" [--type code] [--mime text/x-markdown]",
-        "trilium-etapi.mjs get-note --id <noteId>",
-        "trilium-etapi.mjs get-content --id <noteId>",
-        "trilium-etapi.mjs set-content --id <noteId> --text \"...\"",
-        "trilium-etapi.mjs append-note --id <noteId> --text \"...\"",
+        "trilium-etapi.mjs get-note (--id <noteId> | --path <path>)",
+        "trilium-etapi.mjs get-content (--id <noteId> | --path <path>)",
+        "trilium-etapi.mjs set-content (--id <noteId> | --path <path>) --text \"...\"",
+        "trilium-etapi.mjs append-note (--id <noteId> | --path <path>) --text \"...\"",
         "trilium-etapi.mjs create-log-entry [--root <noteId>] --title \"...\" --body \"...\"",
-        "trilium-etapi.mjs delete-note --id <noteId> --force"
+        "trilium-etapi.mjs delete-note (--id <noteId> | --path <path>) --force",
+        "trilium-etapi.mjs search-notes --query \"...\" [--limit 20]",
+        "trilium-etapi.mjs list-children (--id <noteId> | --path <path>)",
+        "trilium-etapi.mjs rename-note (--id <noteId> | --path <path>) --title \"...\"",
+        "trilium-etapi.mjs move-note (--id <noteId> | --path <path>) (--to <noteId> | --to-path <path>)",
+        "trilium-etapi.mjs resolve-path --path \"...\"",
+        "trilium-etapi.mjs create-folder (--parent <id> | --parent-path <path>) --title \"...\""
       ],
       store: "tools/.openclaw-trilium.json (gitignored)"
     });
@@ -272,6 +441,12 @@ async function main() {
     case "append-note": return cmdAppendNote(args);
     case "create-log-entry": return cmdCreateLogEntry(args);
     case "delete-note": return cmdDeleteNote(args);
+    case "search-notes": return cmdSearchNotes(args);
+    case "list-children": return cmdListChildren(args);
+    case "rename-note": return cmdRenameNote(args);
+    case "move-note": return cmdMoveNote(args);
+    case "resolve-path": return cmdResolvePath(args);
+    case "create-folder": return cmdCreateFolder(args);
     default: die(`Unknown command: ${cmd}`);
   }
 }

@@ -40,8 +40,19 @@ Create a log entry:
 
 Read / modify content:
 - node {baseDir}/scripts/trilium.mjs get-content --id NOTE_ID
+- node {baseDir}/scripts/trilium.mjs get-content --path "Context/Daily"
 - node {baseDir}/scripts/trilium.mjs append-note --id NOTE_ID --text "More text"
 - node {baseDir}/scripts/trilium.mjs set-content --id NOTE_ID --text "Full replacement content"
 
 Delete (explicit force required):
 - node {baseDir}/scripts/trilium.mjs delete-note --id NOTE_ID --force
+
+File management (via trilium_file_manager tool or CLI):
+- node {baseDir}/scripts/trilium.mjs search-notes --query "search term" --limit 10
+- node {baseDir}/scripts/trilium.mjs list-children --path "/OpenClaw"
+- node {baseDir}/scripts/trilium.mjs rename-note --path "OldName" --title "NewName"
+- node {baseDir}/scripts/trilium.mjs move-note --path "NoteToMove" --to-path "Destination/Folder"
+- node {baseDir}/scripts/trilium.mjs resolve-path --path "/OpenClaw/Context"
+- node {baseDir}/scripts/trilium.mjs create-folder --parent-path "ParentFolder" --title "NewFolder"
+
+Path resolution: paths starting with "/" resolve from Trilium root; other paths resolve from OpenClaw root. Case-insensitive matching.
