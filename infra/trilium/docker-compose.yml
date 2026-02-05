@@ -4,7 +4,7 @@ services:
     container_name: trilium
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${TRILIUM_PORT:-3011}:8080"
+      - "${TRILIUM_BIND:-0.0.0.0}:${TRILIUM_PORT:-3011}:8080"
     volumes:
       - trilium-data:/home/node/trilium-data
     environment:
